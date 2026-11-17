@@ -1,0 +1,75 @@
+# Antigravity Skill Mechanics, Composition, and Non-Developer UX Constraints
+
+Research report for `nsj6646/skills` Wayfinder ticket [#3](https://github.com/nsj6646/skills/issues/3), investigating primary documentation and installed skills on disk to inform tickets [#6](https://github.com/nsj6646/skills/issues/6) (Antigravity onboarding & non-developer UX) and [#9](https://github.com/nsj6646/skills/issues/9) (skill modularity & routing).
+
+---
+
+## 1. Skill Discovery, Frontmatter & Triggering
+
+### 1.1 Discovery Roots & Precedence
+- **Standard customization roots** (`/Users/seungjoo/.gemini/antigravity-cli/builtin/skills/agy-customizations/SKILL.md`, L41–75):
+  1. **Workspace project** (highest precedence): walks up from CWD to repository root (`.git`) looking for `.agents/` (or `.agent/`, `_agents/`, `_agent/`) and `skills/<name>/SKILL.md` (`docs/skills.md`, L9–19).
+  2. **Declared configs**: `skills.json` / `plugins.json` (`docs/json_configs.md`, L11–118), scanning `entries` **one level deep** (L49–50).
+  3. **Global discovery**: `~/.gemini/config/` (`agy-customizations/SKILL.md`, L52–54, L70).
+  4. **Built-in customizations**: mounted by name rather than directory discovery (L36–37, L71–72).
+  5. **Global declared configs**: lowest precedence (L73–74).
+- **Antigravity CLI local symlink root**: `/Users/seungjoo/workspace/skills/scripts/link-skills.sh` (L10) symlinks `skills/<name>` into `~/.gemini/antigravity-cli/skills/<name>`, which is actively scanned in `agy` sessions (empirically verified: skills in `~/.gemini/antigravity-cli/skills/` without `disable-model-invocation: true` appear in the live `<skills>` prompt block).
+- **Directory convention in `nsj6646/skills`** (`/Users/seungjoo/workspace/skills/AGENTS.md`, L5–6): `skills/<skill-name>/SKILL.md` with lowercase hyphenated folder name matching frontmatter `name`, bulky docs in `references/`, helper scripts in `scripts/`.
+
+### 1.2 Frontmatter Fields & Observed Runtime Behavior
+- **Required fields** (`agy-customizations/docs/skills.md`, L23–32, L49–54; `migrate-agent-settings/SKILL.md`, L133–136, L144):
+  - `name`: lowercase hyphenated identifier matching the folder name. Antigravity drops a `SKILL.md` missing frontmatter or `name`.
+  - `description`: non-empty string; Antigravity drops a skill with an empty `description`.
+- **Invocation flags observed on disk and in live `<skills>` injection**:
+  - `disable-model-invocation: true` (`writing-for-agents/SKILL-MECHANICS.md`, L10): empirically verified in this live `agy` session — skills carrying `disable-model-invocation: true` (`wayfinder`, `ask-matt`, `grill-me`, `grill-with-docs`, `implement`, `implement-spec`, `setup-matt-pocock-skills`, `show-me`, `to-spec`, `to-tickets`, `triage`, `wait-what`) are **excluded** from the `<skills>` context block, so neither the model nor other skills can discover/trigger them autonomously; only the human invoking `/skill-name` can load them.
+  - Default (omitted `disable-model-invocation`): model-invoked **and** user-invocable (`SKILL-MECHANICS.md`, L9). Only `name`, `SKILL.md` path, and `description` are injected into `<skills>` (progressive disclosure: `agy-customizations/SKILL.md`, L85–87).
+  - `disable-slash-command: true` (used in `builtin/skills/swarm_monitor/SKILL.md` L7, `swarm_narrator`, `swarm_pane`, `ui-plugin-navigation`): keeps the skill in `<skills>` (observed for `swarm_monitor`) while hiding it from the user's `/` slash menu.
+  - `metadata` (`automation/SKILL.md` L4–5, `native_swarm/SKILL.md` L7–9): optional UI hints such as `icon` / `logo`.
+  - **Legacy Claude/CLI argument placeholders**: `elinp/SKILL.md` (L10) uses `$ARGUMENTS` and `teach/SKILL.md` (L5) uses `argument-hint`, whereas Antigravity's `migrate-agent-settings/SKILL.md` (L142–143) explicitly instructs replacing `$ARGUMENTS`, `$1`, and `{{args}}` with prose (`"Apply this to what the user asked for."`). Do not rely on `$ARGUMENTS` substitution in Antigravity skills.
+
+### 1.3 Natural-Language Korean Requests vs. English `SKILL.md`
+- **How triggering works** (`agy-customizations/docs/skills.md`, L51–54; `writing-for-agents/SKILL.md`, L12–18, L65): The model selects a skill solely from its always-loaded `<skills>` entry (`name` + `description`). Because `SKILL.md` is kept in English (per repo/user conventions and `writing-for-agents`), **English developer jargon in `description` creates a semantic gap** against everyday Korean user prompts (e.g., `"red-green-refactor"` in `tdd/SKILL.md` L3 or `"ADR"` in `domain-modeling/SKILL.md` L3 won't naturally match `"엑셀 매크로 만들고 싶어"`, `"화관법 계산기"`, or `"회사 Access가 너무 느려"`).
+- **Mitigation from `writing-for-agents`** (`SKILL.md`, L14–18, L65): Front-load leading words and enumerate distinct trigger **branches** in `description` using plain domain intents/tasks (Excel/CSV/Access replacement, Outlook automation, exact/chemical compliance calculation, synthetic test data, portable company-PC packaging) — and optionally include key Korean domain anchors if needed for reliable cross-lingual matching.
+- **Explicit `/skill-name` UX** (`antigravity_guide/references/app.md`, L25–27; `cli.md`, L30–31): Typing `/` opens the slash-command menu displaying each command's `description`. For a non-developer, `SKILL-MECHANICS.md` (L20–22) notes that multiple user-invoked skills pile up cognitive load ("the human is the index"); keeping **one** primary model-invoked entry skill (which also appears in `/`) avoids forcing the user to memorize command names.
+
+---
+
+## 2. Skill Composition, Routing & `references/` Patterns
+
+### 2.1 Critical Harness Discrepancy: No `Skill` Tool in Antigravity
+- Several skills in `~/.gemini/antigravity-cli/skills/` (`wayfinder/SKILL.md` L77–79, L111, L115, L124; `grill-me/SKILL.md` L7; `grill-with-docs/SKILL.md` L7; `implement/SKILL.md` L11, L15; `implement-spec/SKILL.md` L30, L38; `tdd/SKILL.md` L26) say `Call the Skill tool with "<name>"`.
+- **Antigravity does NOT expose a `Skill` tool.** Observed native tools in this Antigravity session are `read_file`, `write_file`, `edit_file`, `run_command`, `manage_task`, `invoke_subagent`, `define_subagent`, `manage_subagents`, `send_message`, `ask_question`, `search_web`, `run_workflow`, `swarm`, `schedule`, `call_mcp_tool`, `list_resources`, `read_resource`. Moreover, `migrate-agent-settings/SKILL.md` (L182) warns to strip harness-specific tool instructions (such as `"use the Bash tool"`) when porting skills to Antigravity.
+- Any Antigravity-native skill that composes sub-skills or docs must instruct the agent to **read the target file directly** (e.g., via `read_file`), not invoke a non-existent `Skill` tool.
+
+### 2.2 Supported Composition & Modularity Patterns in Antigravity
+1. **Single Entry Skill + Progressive `references/` + `scripts/` (lowest permanent context load)**
+   - Recommended by `agy-customizations/docs/skills.md` (L12–19, L58–64) and `AGENTS.md` (L6), exemplified by `antigravity_guide/SKILL.md` (L14–28), `codebase-design/SKILL.md` (L113–114), `tdd/SKILL.md` (L16), `setup-matt-pocock-skills/SKILL.md` (L110–114), and `wizard/SKILL.md` (L10).
+   - Only the main `SKILL.md`'s `name` + `description` sits in `<skills>` every turn; phase-specific procedures (`references/*.md`) are linked with relative Markdown links behind clear branch triggers ("context pointers", `writing-for-agents/SKILL.md` L12–18, L33–39) and loaded via `read_file` only when that branch activates.
+   - **Path-resolution caveat** (`teach/SKILL.md`, L12): relative links inside `SKILL.md` (e.g., `[references/intake.md](references/intake.md)`) resolve from the **skill directory**, whereas project paths (`./sample_data/`, `MISSION.md`) resolve from the **workspace CWD**. State this explicitly in `SKILL.md` when both coexist.
+2. **Router Skill + Separate Sub-Skills**
+   - Pattern in `ask-matt/SKILL.md` (L1–97) and `writing-for-agents/SKILL-MECHANICS.md` (L9–22).
+   - **Important Antigravity constraint**: Per `SKILL-MECHANICS.md` (L10, L22), a router can only *hint* at `disable-model-invocation: true` skills (requiring the human to type `/sub-skill`). For autonomous routing by the main skill without the user typing commands, sub-skills must either:
+     - be **model-invoked** (each paying permanent `<skills>` context load per turn, only justified when independently triggerable or shared across unrelated skills: `SKILL-MECHANICS.md` L18), **or**
+     - live as `references/*.md` files inside the main skill (zero extra `<skills>` load, directly readable via `read_file`).
+3. **Subagent Dispatch for Context Isolation (`invoke_subagent`)**
+   - Used in `code-review/SKILL.md` (L11, L58–60), `implement-spec/SKILL.md` (L15–39), `wayfinder/SKILL.md` (L77, L115), `grilling/SKILL.md` (L28), and `writing-for-agents/SKILL.md` (L49).
+   - Spinning up `invoke_subagent` (`research` or `self` or custom `define_subagent`) starts a **fresh context window**, keeping heavy file reads, verification legwork, or post-completion steps from polluting or rushing the main user-facing session. Subagents communicate back via concise summaries or workspace file paths.
+4. **Workspace State Files (External Reference Across Sessions)**
+   - `teach/SKILL.md` (L12–20) stores stateful user context (`MISSION.md`, `NOTES.md`, `RESOURCES.md`, `learning-records/`) in the **working directory** so a non-developer can close a conversation and resume seamlessly in a new session without re-explaining everything.
+5. **Plugins & `AGENTS.md` Rules (Optional Bundling)**
+   - `agy-customizations/docs/plugins.md` (L3–25) bundles skills + `rules/AGENTS.md` + `hooks.json` + `mcp_config.json` into one toggleable unit. `AGENTS.md` rules (`docs/rules.md`, L31–39) are capped at 24 KB per file and share a `20,000`-token `defaultRulesBudget` (always-on overhead), so keep project-wide always-on rules minimal.
+
+---
+
+## 3. Antigravity UX Touchpoints & Friction for a First-Time Non-Developer
+
+Observed directly from `antigravity_guide/` (`app.md`, `ide.md`, `cli.md`), `agy-customizations/docs/hooks.md`, `builtin/skills/` (`automation/SKILL.md`, `generative_ui/SKILL.md`, `permissioned-github/SKILL.md`), and live Antigravity tool schemas:
+
+| Touchpoint | Observed Antigravity Mechanism | Non-Developer Friction | Design Implication |
+| :--- | :--- | :--- | :--- |
+| **Workspace / Folder Setup** | Antigravity 2.0 `Projects` sidebar manages workspaces (`app.md` L12–13). **Non-Workspace File Access** (`allow`, `ask`, `deny`) gates reads/writes outside the workspace root (`app.md` L51–52, L71–72). `ide.md` exposes code-centric inline lenses & diff overlays (L62–67). | Opening Antigravity in `~`, Desktop, or a folder containing real company Excel/Access files risks data leakage or confusing "outside workspace" prompts. Antigravity 2.0 desktop app is less code-noisy than the IDE. | Have maintainer pre-create a dedicated, isolated Build PC workspace folder (e.g., via #6 onboarding checklist) and verify CWD/workspace before intake; prefer Antigravity 2.0 Chat Canvas over IDE diff views. |
+| **Terminal & Permission Prompts** | **Tool Execution Policy** (`always-proceed`, `request-review`, `strict`, `proceed-in-sandbox`), **Terminal Sandbox**, **Internet Access Policy** (`allow`, `ask`, `deny`), **Command Allowlist/Denylist**, and **Project-Level Settings** (`app.md` L46–79). `PreToolUse` hooks can also gate with `allow`/`deny`/`ask`/`force_ask` (`hooks.md` L207–219). | Under default/review policies, `run_command` shows raw shell commands (Python, `pip`, PyInstaller, etc.) that look alarming to a non-developer, causing approval fatigue or blind clicking. | Skill must explain *in plain Korean before running* what a command does and that an approval popup will appear; bundle multi-step checks into helper scripts (`scripts/`) rather than spamming tiny commands; maintainer onboarding (#6) should configure project-level sandbox / safe allowlist as appropriate. |
+| **Structured Q&A (`ask_question` vs. Plain Text)** | `ask_question` renders a clickable card with numbered options, `(Recommended)` label, `is_multi_select`, and built-in `'Other'` write-in; tool spec warns *"Don't use it for trivial yes/no questions; ask those in plain text."* `automation/SKILL.md` (L20–77) uses `ask_question` for discrete choices (cadence/time) and explicitly forbids it for open-ended descriptions (Turn 3, L76–77). | Multi-question Markdown walls like `grilling/SKILL.md` (`❓ Q1 ... ➡️ ...`) feel robotic/overwhelming; conversely, forcing open-ended business explanations into `ask_question` blocks rich answers. | Use `ask_question` for bounded choices (e.g., output format, risk confirmation, sample-data vs. real-data gate) in plain Korean; use short, warm plain-text questions one step at a time for open-ended workflow descriptions. |
+| **Visual Previews & Output Verification** | Native HTML artifacts created via `write_file` with `ArtifactMetadata` (`UserFacing: true`, `RequestFeedback: false`) render in the **Auxiliary Side Pane** (`>450px`) or inline in chat via `<agent-embed src="file:///.../widget.html">` (`<450px` target, `800px` cap; `generative_ui/SKILL.md` L15–25, L90–122). Note: scripts cannot set `ArtifactMetadata` (`L17`), and external CDNs are blocked except `tailwindcss.min.js` (`L29–36`). | Non-developers cannot verify correctness by reading Python code or terminal stdout logs (critical for exact 화관법 calculations). `show-me/SKILL.md` L121 (`Bash(open ...)`) is a macOS/Claude pattern. | Use Antigravity HTML artifacts (`write_file` + `ArtifactMetadata`, `<agent-embed>` for compact checks or side-pane for tables) to visually preview sample inputs, step-by-step calculation checks, and mock UI screens without exposing source code. |
+| **Context Window & Session Handoff** | Skills load progressively (`agy-customizations/SKILL.md` L85–87); `AGENTS.md` rules have a 24 KB / 20,000-token budget (`docs/rules.md` L31–39); practical "smart zone" is ~100K–150K tokens (`ask-matt/SKILL.md` L40, `wayfinder/SKILL.md` L57); exceeding limits hits `MAX_TOKEN_BUDGET_EXCEEDED` (`hooks.md` L402). `/compact` and `New Conversation` exist (`app.md` L11). | A non-developer will not notice context degradation or know when to run `/compact` or open a new chat. | Persist tool spec, decisions, synthetic schema, and verification status in simple workspace state files (like `teach/SKILL.md`); prompt the user in plain Korean at major phase boundaries (e.g., after design → build, or before packaging) when starting a fresh chat is cleaner. |
+| **Undo / Checkpoint Recovery** | **No documented chat-level "Undo/Rollback" UI** was found in `agy-customizations/` or `antigravity_guide/` (`ide.md` L65–67 only documents inline editor diff accept/reject). | If an edit breaks a previously working Excel/Access tool, a non-developer cannot use `git checkout` or `git revert` to recover. | Because Antigravity lacks a built-in non-developer rollback button in the 2.0 chat docs, the skill/helper scripts (#6) must automate silent recovery points (e.g., hidden local git commits or timestamped snapshot folders before major edits) and expose a plain-Korean "이전 정상 상태로 되돌려줘" recovery flow. |
